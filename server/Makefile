@@ -1,6 +1,6 @@
 all: server
 
-client: server.c
+server: server.c
 	gcc server.c -Wall -lmhash -lssl -o server
 
 .PHONY: clean
