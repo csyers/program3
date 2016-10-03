@@ -5,6 +5,15 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <neTnet/in.h>
+#include <netdb.h>
+
+#define MAX_PENDING 5
+#define MAX_LINE 4096
 
 int main()
 {
