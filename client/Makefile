@@ -6,4 +6,4 @@ client: client.c
 .PHONY: clean
 
 clean:
-	-@rm -rf searver 2>/dev/null || true
+	-@rm -rf client 2>/dev/null
