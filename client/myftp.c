@@ -35,6 +35,7 @@ int main(int argc, char* argv[])
     char file[MAX_LINE];
     int s;
     int len;
+    short filelen;
 
     // get host name from the first command line argument
     host = argv[1];
@@ -102,6 +103,16 @@ int main(int argc, char* argv[])
                 close(s);
                 exit(1);
             }
+            file[MAX_LINE-1] = '\0';
+            filelen = strlen(file);
+
+            // strip the newline character from the buffer
+            if((filelen-1 > 0) && (file[filelen-1] == '\n'))
+            {
+                file[filelen-1] = '\0';
+                filelen--;
+            }
+            // send size
         // case: UPL
         }
         else if (strcmp(buf,"UPL") == 0)
