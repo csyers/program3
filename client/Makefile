@@ -1,9 +1,9 @@
-all: client
+all: myftp
 
-client: client.c
-	gcc client.c -Wall -lmhash -lssl -o client
+myftp: myftp.c
+	gcc myftp.c -Wall -lmhash -lssl -o myftp
 
 .PHONY: clean
 
 clean:
-	-@rm -rf client 2>/dev/null
+	-@rm -rf myftp 2>/dev/null
