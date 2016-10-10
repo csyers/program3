@@ -1,9 +1,9 @@
-all: server
+all: myftpd
 
-server: server.c
-	gcc server.c -Wall -lmhash -lssl -o server
+myftpd: myftpd.c
+	gcc myftpd.c -Wall -lmhash -lssl -o myftpd
 
 .PHONY: clean
 
 clean:
-	-@rm -rf server 2>/dev/null
+	-@rm -rf myftpd 2>/dev/null
