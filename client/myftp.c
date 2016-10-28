@@ -35,7 +35,7 @@ int main(int argc, char* argv[])
     char file[MAX_LINE];
     int s;
     int len;
-    short filelen;
+    short int len_filename;
 
     // get host name from the first command line argument
     host = argv[1];
@@ -88,6 +88,10 @@ int main(int argc, char* argv[])
         // case: REQ
         if(strcmp(buf,"REQ") == 0)
         {
+	    int filesize;
+	    FILE *fp;
+	    int bytesReceived;
+
             // send REQ to server, print error and exit on failure
             if(send(s,buf,len+1,0)==-1)
             {
@@ -95,6 +99,7 @@ int main(int argc, char* argv[])
                 close(s);
                 exit(1);
             }
+
             // prompt user for filename
             printf("Enter file to retrieve: ");
             if(fgets(file,sizeof(file),stdin)<0)
@@ -104,15 +109,60 @@ int main(int argc, char* argv[])
                 exit(1);
             }
             file[MAX_LINE-1] = '\0';
-            filelen = strlen(file);
+            len_filename = strlen(file);
 
             // strip the newline character from the buffer
-            if((filelen-1 > 0) && (file[filelen-1] == '\n'))
+            if((len_filename-1 > 0) && (file[len_filename-1] == '\n'))
             {
-                file[filelen-1] = '\0';
-                filelen--;
+                file[len_filename-1] = '\0';
+                len_filename--;
             }
+
             // send size
+	    len_filename = htons(len_filename);
+            if(send(s, &len_filename,sizeof(len_filename),0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+	    
+            // send filename
+            if(send(s, &file,sizeof(file),0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+	    if((filesize = recv(s, &filesize, sizeof(int), 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+	    }
+	    filesize = ntohl(filesize);
+	    printf("%d\n", filesize);
+	    fflush(stdout);
+	    
+	    if(filesize == -1) {
+		printf("file: %s does not exist on the server\n", file);
+	    } else {
+	        if(!(fp = fopen(file, "w"))) {	
+                    fprintf(stderr,"myftp: error in recv\n");
+                    close(s);
+             	    exit(1);
+	        }
+	        while((bytesReceived = recv(s, buf, MAX_LINE, 0)) > 0) {
+		    fwrite(buf, 1, bytesReceived, fp);
+		}
+
+		if(bytesReceived < 0) {
+                    fprintf(stderr,"myftp: error in recv\n");
+                    close(s);
+                    exit(1);
+		}
+	    }
+
         // case: UPL
         }
         else if (strcmp(buf,"UPL") == 0)
