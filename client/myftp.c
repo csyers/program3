@@ -91,6 +91,8 @@ int main(int argc, char* argv[])
 	    int filesize;
 	    FILE *fp;
 	    int bytesReceived;
+	    char server_hash[16];
+	    char client_hash[16];
 
             // send REQ to server, print error and exit on failure
             if(send(s,buf,len+1,0)==-1)
@@ -135,26 +137,38 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
-	    if((filesize = recv(s, &filesize, sizeof(int), 0)) == -1) {
+	    if((recv(s, &filesize, sizeof(int), 0)) == -1) {
                 fprintf(stderr,"myftp: error in recv\n");
                 close(s);
                 exit(1);
 	    }
 	    filesize = ntohl(filesize);
-	    printf("%d\n", filesize);
 	    fflush(stdout);
 	    
 	    if(filesize == -1) {
 		printf("file: %s does not exist on the server\n", file);
 	    } else {
+		// receive server_hash
+	        if((recv(s, server_hash, sizeof(server_hash), 0)) == -1) {
+                    fprintf(stderr,"myftp: error in recv\n");
+                    close(s);
+                    exit(1);
+	        }
+
+		// receive file
 	        if(!(fp = fopen(file, "w"))) {	
                     fprintf(stderr,"myftp: error in recv\n");
                     close(s);
              	    exit(1);
 	        }
-	        while((bytesReceived = recv(s, buf, MAX_LINE, 0)) > 0) {
-		    fwrite(buf, 1, bytesReceived, fp);
+
+	        while(filesize > 0) {
+		    bytesReceived = recv(s, buf, MAX_LINE, 0);
+		    filesize -= bytesReceived;
+		    printf("receiving %d bytes\n", bytesReceived);
+		    fwrite(buf, sizeof(char), bytesReceived, fp);
 		}
+		printf("Here?\n");
 
 		if(bytesReceived < 0) {
                     fprintf(stderr,"myftp: error in recv\n");
@@ -162,7 +176,6 @@ int main(int argc, char* argv[])
                     exit(1);
 		}
 	    }
-
         // case: UPL
         }
         else if (strcmp(buf,"UPL") == 0)

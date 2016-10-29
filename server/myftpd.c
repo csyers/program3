@@ -129,7 +129,8 @@ int main(int argc, char* argv[])
            	}
 		buf[len] = '\0';
 
-		printf("%s\n", buf);
+		// print name of file
+		/*printf("%s\n", buf);*/
 		if (access(buf, R_OK) != -1) {
 			printf("file exist\n");
 			//return size of file
@@ -152,7 +153,7 @@ int main(int argc, char* argv[])
 				close(s);
 				exit(1);
 			}
-			mhash(td, &buf, filesize);
+			mhash(td, &buf, sizeof(buf));
 			mhash_deinit(td, hash);
 			if(send(new_s, &hash, sizeof(hash), 0)==-1) // NULL terminator?
 			{
@@ -169,6 +170,7 @@ int main(int argc, char* argv[])
 				close(s);
 				exit(1);
 			}
+			printf("sending the file\n");
 			while(1) {
 				bzero((char *)buf, sizeof(buf));
 				int nred = fread(buf, 1, MAX_LINE, fp);
@@ -185,6 +187,7 @@ int main(int argc, char* argv[])
 				}
 
 				if (nred < MAX_LINE) {
+					printf("done\n");
 					if(ferror(fp)) {
 						fprintf(stderr, "myftpd: server file read error\n");
 						close(new_s);
@@ -194,11 +197,11 @@ int main(int argc, char* argv[])
 					break;
 				}
 			}
-
 		} else {
 			int temp = -1;
 			printf("file does not exist\n");
 			temp = htonl(temp);
+			printf("sending: %d\n",temp);
 			if(send(new_s, &temp, sizeof(int), 0)==-1) 
 			{
 				fprintf(stderr, "myftpd: server send error\n");
