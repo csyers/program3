@@ -15,6 +15,7 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <mhash.h>
 
 #define MAX_LINE 4096
 
@@ -36,6 +37,7 @@ int main(int argc, char* argv[])
     int s;
     int len;
     short int len_filename;
+    struct timeval tv_start, tv_end;
 
     // get host name from the first command line argument
     host = argv[1];
@@ -88,11 +90,13 @@ int main(int argc, char* argv[])
         // case: REQ
         if(strcmp(buf,"REQ") == 0)
         {
-	    int filesize;
-	    FILE *fp;
-	    int bytesReceived;
-	    char server_hash[16];
-	    char client_hash[16];
+	        int filesize;
+	        FILE *fp;
+	        int bytesReceived;
+            int bytes;
+	        char server_hash[17];
+	        char client_hash[17];
+            MHASH td;
 
             // send REQ to server, print error and exit on failure
             if(send(s,buf,len+1,0)==-1)
@@ -121,7 +125,7 @@ int main(int argc, char* argv[])
             }
 
             // send size
-	    len_filename = htons(len_filename);
+	        len_filename = htons(len_filename);
             if(send(s, &len_filename,sizeof(len_filename),0)==-1)
             {
                 fprintf(stderr,"myftp: error in send\n");
@@ -137,44 +141,87 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
-	    if((recv(s, &filesize, sizeof(int), 0)) == -1) {
+	        if((recv(s, &filesize, sizeof(int), 0)) == -1) {
                 fprintf(stderr,"myftp: error in recv\n");
                 close(s);
                 exit(1);
-	    }
-	    filesize = ntohl(filesize);
-	    fflush(stdout);
+	        }
+
+	        filesize = ntohl(filesize);
+	        fflush(stdout);
 	    
-	    if(filesize == -1) {
-		printf("file: %s does not exist on the server\n", file);
-	    } else {
-		// receive server_hash
-	        if((recv(s, server_hash, sizeof(server_hash), 0)) == -1) {
+	        if(filesize == -1) {
+		        printf("file: %s does not exist on the server\n", file);
+	        } else {
+		    // receive server_hash
+	            if((recv(s, server_hash, sizeof(server_hash), 0)) == -1) {
                     fprintf(stderr,"myftp: error in recv\n");
                     close(s);
                     exit(1);
 	        }
-
-		// receive file
-	        if(!(fp = fopen(file, "w"))) {	
-                    fprintf(stderr,"myftp: error in recv\n");
-                    close(s);
-             	    exit(1);
+            printf("%s\n",server_hash);
+		    // receive file
+	        if(!(fp = fopen(file, "w+"))) {	
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
 	        }
-
-	        while(filesize > 0) {
-		    bytesReceived = recv(s, buf, MAX_LINE, 0);
-		    filesize -= bytesReceived;
-		    printf("receiving %d bytes\n", bytesReceived);
-		    fwrite(buf, sizeof(char), bytesReceived, fp);
-		}
-		printf("Here?\n");
-
-		if(bytesReceived < 0) {
+            
+            gettimeofday(&tv_start,0);
+            int remaining_filesize = filesize;
+	        while(remaining_filesize > 0) {
+		        bytesReceived = recv(s, buf, MAX_LINE, 0);
+		        if(bytesReceived < 0) {
                     fprintf(stderr,"myftp: error in recv\n");
                     close(s);
                     exit(1);
-		}
+		        }
+		        remaining_filesize -= bytesReceived;
+		        printf("receiving %d bytes\n", bytesReceived);
+		        fwrite(buf, sizeof(char), bytesReceived, fp);
+		    }
+
+            gettimeofday(&tv_end,0);
+
+			td = mhash_init(MHASH_MD5);
+		    if (td == MHASH_FAILED) {
+		        fprintf(stderr, "myftpd: md5 hash failed\n");
+		        close(s);
+		       	exit(1);
+	        }
+            rewind(fp);
+            //buf[0] = '\0';
+            bytes=fread(buf,1,MAX_LINE,fp);
+           // buf[bytes]= '\0';
+            //printf("%s\n",strerror(errno));
+            //printf("bytes: %d\n",bytes);
+            //printf("buf: %s\n",buf);
+            while(bytes>0)
+            {
+             //   printf("HERE\n");
+                mhash(td,&buf,sizeof(buf));
+                bytes=fread(buf,1,MAX_LINE,fp);
+             //   buf[bytes] = '\0';
+            }
+          
+			mhash_deinit(td, client_hash);
+            client_hash[16] = '\0';
+            printf("%s\n",client_hash);
+            //printf("%s\n%s\n",server_hash,client_hash);
+            if(strcmp(client_hash,server_hash) == 0)
+            {
+                // files are the same   
+                // calculate time of file transfer
+                long int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
+                double throughput = filesize/(double)time_diff;
+                printf("Time: %ld\n",time_diff);
+                printf("Bytes: %d\n",filesize);
+                printf("Throughput: %f MBps\n",throughput);
+            } else
+            {
+                // files are different 
+                printf("files are different\n");
+            }
 	    }
         // case: UPL
         }
