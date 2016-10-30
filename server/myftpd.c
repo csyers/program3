@@ -228,6 +228,102 @@ int main(int argc, char* argv[])
             // case: UPL
             else if(strcmp(buf,"UPL") == 0)
             {
+		FILE *fp;
+		int filesize, bytesReceived;
+		short int len_filename = 0;
+		MHASH td;
+		char hash[16];
+		char client_hash[16];
+
+		printf("UPL received\n");
+		
+		// receive file name
+		bzero(buf, sizeof(buf));
+		printf("sizeof(buf): %d\n", sizeof(buf));
+      	    	if((len=recv(new_s,buf,sizeof(buf),0))==-1)
+            	{
+                	fprintf(stderr,"myftpd: server received error\n");
+               		close(new_s);
+                	close(s);
+                	exit(1);
+           	}
+		buf[len] = '\0';
+		printf("filename received\n");
+		printf("bytesReceived: %d\n", len);
+		printf("filename: %s\n", buf);
+
+		// receive len of filename
+      	    	if((len=recv(new_s, &len_filename, sizeof(short int),0))==-1)
+            	{
+                	fprintf(stderr,"myftpd: server received error\n");
+               		close(new_s);
+                	close(s);
+                	exit(1);
+           	}
+
+		len_filename = ntohs(len_filename);
+		printf("len_filename received\n", len_filename);
+		/*printf("len_filename: %hi\n", len_filename);*/
+		printf("bytesReceived: %d\n", len);
+
+		// ack the send
+		int temp = -1;
+		printf("send ack\n");
+		temp = htonl(temp);
+		if(send(new_s, &temp, sizeof(int), 0)==-1) 
+		{
+			fprintf(stderr, "myftpd: server send error\n");
+			close(new_s);
+			close(s);
+			exit(1);
+		}
+
+		// receive filesize
+		filesize = 0;
+		len = 0;
+		printf("waiting for filesize\n");
+		if((len=recv(new_s, &filesize, sizeof(int), 0))==-1) {
+			fprintf(stderr,"myftp: error in recv\n");
+			close(new_s);
+			close(s);
+			exit(1);
+		}
+		printf("bytesReceived: %d\n", len);
+		printf("filesize: %d\n", filesize);
+		filesize = ntohl(filesize);
+		printf("filesize: %d\n", filesize);
+
+		// open file for receiving
+		if(!(fp = fopen(buf, "w"))) {
+			fprintf(stderr, "myftp: error in opening file\n");
+			close(new_s);
+			close(s);
+			exit(1);
+		}
+
+		// receive file
+		while (filesize > 0) {
+			bytesReceived = recv(new_s, buf, MAX_LINE, 0);
+			filesize -= bytesReceived;
+			printf("receiving %d bytes\n", bytesReceived);
+			printf("%s\n", buf);
+			if(fwrite(buf, sizeof(char), bytesReceived, fp) < bytesReceived) {
+				fprintf(stderr, "myftpd: error in write\n");
+				close(new_s);
+				close(s);
+				exit(1);
+			}
+		}
+		fclose(fp);
+		if(bytesReceived < 0) {
+			printf("myftpd: error in recv\n");
+			close(new_s);
+			close(s);
+			exit(1);
+		}
+
+		// receive MD5 hash
+
             }
             // case: LIS
             else if(strcmp(buf,"LIS") == 0)

@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <sys/time.h>
@@ -223,10 +224,119 @@ int main(int argc, char* argv[])
                 printf("files are different\n");
             }
 	    }
-        // case: UPL
         }
+        // case: UPL
         else if (strcmp(buf,"UPL") == 0)
         {
+	    int ack;
+	    int filesize;
+	    FILE *fp;
+	    struct stat st;
+	    char client_hash[16];
+	    MHASH td;
+
+            // send UPL to server, print error and exit on failure
+            if(send(s,buf,len+1,0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // prompt user for filename
+            printf("Enter file to upload: ");
+	    bzero(file, sizeof(file));
+            if(fgets(file,sizeof(file),stdin)<0)
+            {
+                fprintf(stderr,"myftp: error in fgets\n");
+                close(s);
+                exit(1);
+            }
+            file[MAX_LINE-1] = '\0';
+            len_filename = strlen(file);
+
+            // strip the newline character from the buffer
+            if((len_filename-1 > 0) && (file[len_filename-1] == '\n'))
+            {
+                file[len_filename-1] = '\0';
+                len_filename--;
+            }
+
+	    int sent=0;
+            // send filename
+	    printf("sending filename\n");
+            if((sent=send(s, &file,sizeof(file),0))==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+	    printf("bytesSent: %d\n", sent);
+
+            // send len_filename
+	    printf("sending len_filename\n");
+	    len_filename = htons(len_filename);
+            if((sent=send(s, &len_filename,sizeof(len_filename),0))==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+	    printf("bytesSent: %d\n", sent);
+	    
+
+	    // receive ack
+	    printf("receiving ack\n");
+	    if((recv(s, &ack, sizeof(int), 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+	    }
+	    ack = ntohl(ack);
+	    printf("ack: %d\n", ack);
+
+	    if (ack != -1) {
+	        fprintf(stderr, "myftpd: upl was not acknowledged\n");
+		close(s);
+		exit(1);
+	    }
+
+	    // send filesize
+	    stat(file, &st);
+	    filesize = st.st_size;
+	    filesize = htonl(filesize);
+	    if(send(s, &filesize, sizeof(int),0)==-1) {
+		fprintf(stderr, "myftpd: client send error\n");
+		close(s);
+		exit(1);
+	    }
+	    // send file
+	    if (!(fp = fopen(file, "r"))) {
+		fprintf(stderr, "myftpd: error reading file\n");
+		close(s);
+		exit(1);
+	    }
+
+	    while(1) {
+		bzero((char *)buf, sizeof(buf));
+		int nred = fread(buf, sizeof(char), MAX_LINE, fp);
+		if (nred > 0) {
+		    if (send(s, &buf, nred, 0)==-1) {
+		        fprintf(stderr, "myftpd: error reading file\n");
+		        close(s);
+		        exit(1);
+		    }
+		}
+
+		if (nred < MAX_LINE) {
+		    if(ferror(fp)) {
+		        fprintf(stderr, "myftpd: error reading file\n");
+		        close(s);
+		        exit(1);
+		    }
+		    break;
+		}
+	    }
 
         // case: LIS
         }
