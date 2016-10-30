@@ -120,7 +120,7 @@ int main(int argc, char* argv[])
         
                 // receive file name
                 bzero(buf, sizeof(buf));
-                if((len=recv(new_s,buf,sizeof(buf),0))==-1)
+                if((len=recv(new_s,buf,len_filename,0))==-1)
                 {
                     fprintf(stderr,"myftpd: server received error\n");
                     close(new_s);
@@ -161,13 +161,13 @@ int main(int argc, char* argv[])
                         close(s);
                         exit(1);
                     }
-		    bzero(buf, sizeof(buf));
+		            bzero(buf, sizeof(buf));
                     bytes=fread(buf,1,MAX_LINE,fp);
                     while(bytes>0)
                     {
                        // printf("%s",buf);
                         mhash(td,&buf,sizeof(buf));
-		        bzero(buf, sizeof(buf));
+		                bzero(buf, sizeof(buf));
                         bytes=fread(buf,1,MAX_LINE,fp);
                     }
             
@@ -223,11 +223,14 @@ int main(int argc, char* argv[])
             else if(strcmp(buf,"UPL") == 0)
             {
                 FILE *fp;
-                int filesize, bytesReceived;
+                char file[MAX_LINE];
+                int filesize, bytesReceived, bytes;
                 short int len_filename = 0;
                 MHASH td;
                 char hash[16];
                 char client_hash[16];
+
+                struct timeval tv_start, tv_end;
 
                 // receive len of filename
                 if((len=recv(new_s, &len_filename, sizeof(short int),0))==-1)
@@ -244,17 +247,17 @@ int main(int argc, char* argv[])
                 
                 // receive file name
                 bzero(buf, sizeof(buf));
-                if((len=recv(new_s,buf,sizeof(buf),0))==-1)
+                if((len=recv(new_s,file,len_filename,0))==-1)
                 {
                     fprintf(stderr,"myftpd: server received error\n");
                     close(new_s);
                     close(s);
                     exit(1);
                 }
-                buf[len] = '\0';
+                file[len] = '\0';
                 printf("filename received\n");
                 printf("bytesReceived: %d\n", len);
-                printf("filename: %s\n", buf);
+                printf("filename: %s\n", file);
 
 
                 // ack the send
@@ -284,18 +287,25 @@ int main(int argc, char* argv[])
                 printf("filesize: %d\n", filesize);
 
                 // open file for receiving
-                /*
-                if(!(fp = fopen(buf, "w"))) {
+                if(!(fp = fopen(file, "w+"))) {
                     fprintf(stderr, "myftp: error in opening file\n");
                     close(new_s);
                     close(s);
                     exit(1);
                 }
 
+                gettimeofday(&tv_start,0);
                 // receive file
-                while (filesize > 0) {
-                    bytesReceived = recv(new_s, buf, MAX_LINE, 0);
-                    filesize -= bytesReceived;
+                int remaining_filesize = filesize;
+                while (remaining_filesize > 0) {
+                    bytesReceived = recv(new_s, buf, MAX_LINE > remaining_filesize ? remaining_filesize: MAX_LINE, 0);
+                    if(bytesReceived < 0) {
+                        fprintf(stderr, "myftpd: error in recv\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
+                    remaining_filesize -= bytesReceived;
                     printf("receiving %d bytes\n", bytesReceived);
                     printf("%s\n", buf);
                     if(fwrite(buf, sizeof(char), bytesReceived, fp) < bytesReceived) {
@@ -305,13 +315,9 @@ int main(int argc, char* argv[])
                         exit(1);
                     }
                 }
-                fclose(fp);
-                if(bytesReceived < 0) {
-                    fprintf(stderr, "myftpd: error in recv\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }
+
+                gettimeofday(&tv_end,0);
+                //fclose(fp);
 
                 // receive MD5 hash
                 if (recv(new_s, client_hash, sizeof(hash), 0) == -1) {
@@ -320,7 +326,39 @@ int main(int argc, char* argv[])
                     close(s);
                     exit(1);
                 }
-                */
+                rewind(fp);
+                printf("Rewinded fp\n");
+                td = mhash_init(MHASH_MD5);
+                if (td == MHASH_FAILED) {
+                    fprintf(stderr, "myftp: hashing failed\n");
+                    close(s);
+                    exit(1);
+                }
+                bzero(buf,sizeof(buf));
+                bytes = fread(buf, 1, MAX_LINE, fp);
+                printf("BYTES: %d\n", bytes);
+                while(bytes > 0 )
+                {
+                    mhash(td, &buf, sizeof(buf));
+                    bzero(buf,sizeof(buf));
+                    bytes = fread(buf,1, MAX_LINE, fp);
+                }
+                mhash_deinit(td,hash);
+                fclose(fp);
+
+                if(strncmp(hash,client_hash,16) == 0){
+                    // same
+                    long int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
+                    double throughput = filesize/(double)time_diff;
+                    printf("%d\n",filesize);
+                    printf("%ld\n",time_diff);
+                    printf("%lf\n",throughput);
+                    // send throughput
+                } else {
+                    // different
+                           
+                }
+
             }
             // case: LIS
             else if(strcmp(buf,"LIS") == 0)
