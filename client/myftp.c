@@ -115,6 +115,8 @@ int main(int argc, char* argv[])
                 close(s);
                 exit(1);
             }
+
+            // clean filename and get its length
             file[MAX_LINE-1] = '\0';
             len_filename = strlen(file);
 
@@ -125,7 +127,7 @@ int main(int argc, char* argv[])
                 len_filename--;
             }
 
-            // send size
+            // send size in short int
             len_filename = htons(len_filename);
             if(send(s, &len_filename,sizeof(len_filename),0)==-1)
             {
@@ -134,7 +136,7 @@ int main(int argc, char* argv[])
                 exit(1);
             }
         
-            // send filename
+            // send filename stored in file
             if(send(s, &file,strlen(file),0)==-1)
             {
                 fprintf(stderr,"myftp: error in send\n");
@@ -142,88 +144,109 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
+            // receive the size of the file in bytes
             if((recv(s, &filesize, sizeof(int), 0)) == -1) {
                 fprintf(stderr,"myftp: error in recv\n");
                 close(s);
                 exit(1);
             }
 
+            // decode the filesize
             filesize = ntohl(filesize);
-            fflush(stdout);
         
+            // if the file size indicated that the file does not exist
             if(filesize == -1) {
                 printf("file: %s does not exist on the server\n", file);
+            // if the file size indicated that the server doesn't have read rights
             } else if (filesize == -2){
                 printf("Server does not have read permission on file %s\n",file);
+            // if the file size indicated that the file was not a regular file
             } else if (filesize == -3){
                 printf("file: %s is a directory\n",file);
+            // else, the client received the # of bytes
             } else {
-                    // receive server_hash
-                        if((recv(s, server_hash, sizeof(server_hash), 0)) == -1) {
-                            fprintf(stderr,"myftp: error in recv\n");
-                            close(s);
-                            exit(1);
-                    }
-                    // receive file
-                    if(!(fp = fopen(file, "w+"))) {    
+                // receive server_hash
+                if((recv(s, server_hash, sizeof(server_hash), 0)) == -1) {
+                    fprintf(stderr,"myftp: error in recv\n");
+                    close(s);
+                    exit(1);
+                }  
+
+                // create a filepointer to the file
+                if(!(fp = fopen(file, "w+"))) {    
+                    fprintf(stderr,"myftp: error in fopen\n");
+                    close(s);
+                    exit(1);
+                }
+                
+                // start the timer
+                gettimeofday(&tv_start,0);
+
+                // start while loop while there are still bytes to receive
+                int remaining_filesize = filesize;
+                while(remaining_filesize > 0) {
+                    // receive bytes of the file, error if less than 0
+                    bytesReceived = recv(s, buf, MAX_LINE, 0);
+                    if(bytesReceived < 0) {
                         fprintf(stderr,"myftp: error in recv\n");
                         close(s);
                         exit(1);
                     }
+                    // subtract the received bytes from the bytes you are waiting for
+                    remaining_filesize -= bytesReceived;
                     
-                    gettimeofday(&tv_start,0);
-
-                    int remaining_filesize = filesize;
-                    while(remaining_filesize > 0) {
-                        bytesReceived = recv(s, buf, MAX_LINE, 0);
-                        if(bytesReceived < 0) {
-                            fprintf(stderr,"myftp: error in recv\n");
-                            close(s);
-                            exit(1);
-                        }
-                        remaining_filesize -= bytesReceived;
-                        if(fwrite(buf, sizeof(char), bytesReceived, fp) < bytesReceived) {
-                            fprintf(stderr, "myftp: error in write\n");
-                            close(s);
-                            exit(1);
-                        }
-                    }
-
-                    gettimeofday(&tv_end,0);
-
-                    td = mhash_init(MHASH_MD5);
-                    if (td == MHASH_FAILED) {
-                        fprintf(stderr, "myftpd: md5 hash failed\n");
+                    // write the bytes to the file
+                    if(fwrite(buf, sizeof(char), bytesReceived, fp) < bytesReceived) {
+                        fprintf(stderr, "myftp: error in write\n");
                         close(s);
-                           exit(1);
-                    }
-                    rewind(fp);
-                    bzero(buf, sizeof(buf));
-                    bytes=fread(buf,1,MAX_LINE,fp);
-                    while(bytes>0)
-                    {
-                        mhash(td,&buf,sizeof(buf));	
-                        bzero(buf, sizeof(buf));
-                        bytes=fread(buf,1,MAX_LINE,fp);
-                    }
-                  
-                    mhash_deinit(td, client_hash);
-                    fclose(fp);
-                    if(strncmp(client_hash,server_hash, 16) == 0)
-                    {
-                        // files are the same   
-                        // calculate time of file transfer
-                        long int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
-                        double throughput = filesize/(double)time_diff;
-                        printf("Transfer was successful\n");
-                        printf("Throughput: %lf MBps\n",throughput);
-                    } else
-                    {
-                        // files are different 
-                        printf("Files are different. Transfer was unsuccessful\n");
-                        remove(file);
+                        exit(1);
                     }
                 }
+
+                // end timer
+                gettimeofday(&tv_end,0);
+
+                // computer the MD5 hash of the new file
+                //
+                // initialize hash and exit if there is an error
+                td = mhash_init(MHASH_MD5);
+                if (td == MHASH_FAILED) {
+                    fprintf(stderr, "myftpd: md5 hash failed\n");
+                    close(s);
+                       exit(1);
+                }
+
+                // reset file pointer to the beginning of new file
+                rewind(fp);
+                bzero(buf, sizeof(buf));
+                // read and hash bytes until there are no more
+                bytes=fread(buf,1,MAX_LINE,fp);
+                while(bytes>0)
+                {
+                    mhash(td,&buf,sizeof(buf));	
+                    bzero(buf, sizeof(buf));
+                    bytes=fread(buf,1,MAX_LINE,fp);
+                }
+              
+                // end the hash and close the fp
+                mhash_deinit(td, client_hash);
+                fclose(fp);
+
+                // if the client and server hashes match:
+                if(strncmp(client_hash,server_hash, 16) == 0)
+                {
+                    // calculate time of file transfer
+                    long int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
+                    double throughput = filesize/(double)time_diff;
+                    printf("Transfer was successful\n");
+                    printf("Throughput: %lf MBps\n",throughput);
+                // else the hashes didn't match
+                } else
+                {
+                    printf("Files are different. Transfer was unsuccessful\n");
+                    remove(file);
+                }
+            }
         }
         // case: UPL
         else if (strcmp(buf,"UPL") == 0)
@@ -290,28 +313,33 @@ int main(int argc, char* argv[])
             }
             ack = ntohl(ack);
 
+            // if anything but -1 is returned, it is an error. Exit
             if (ack != -1) {
                 fprintf(stderr, "myftpd: upl was not acknowledged\n");
                 close(s);
                 exit(1);
             }
 
-            // send filesize
+            // get number of bytes in the file
             stat(file, &st);
             filesize = st.st_size;
             filesize = htonl(filesize);
+
+            // send the filesize to the server
             if(send(s, &filesize, sizeof(int),0)==-1) {
                 fprintf(stderr, "myftpd: client send error\n");
                 close(s);
                 exit(1);
             }
-            // send file
+
+            // open a read file pointer to the file to send
             if (!(fp = fopen(file, "r"))) {
                 fprintf(stderr, "myftpd: file doesn't exist\n");
                 close(s);
                 exit(1);
             }
 
+            // send the file
             while(1) {
                 bzero((char *)buf, sizeof(buf));
                 int nred = fread(buf, sizeof(char), MAX_LINE, fp);
@@ -359,7 +387,7 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
-            // receive throughput
+            // receive the amount of time it took to receive the file 
             if((recv(s, &time_diff, sizeof(int), 0)) == -1) {
                 fprintf(stderr,"myftp: error in recv\n");
                 close(s);
@@ -367,8 +395,10 @@ int main(int argc, char* argv[])
             }
             time_diff = ntohl(time_diff);
 
+            // if the client receives an error code for the time different
             if (time_diff == -1) {
                 printf("upload unsuccessful\n");
+            // else calculate the throughput and print it
             } else {
                 filesize = ntohl(filesize);
                 throughput = filesize/(double)time_diff;
@@ -408,6 +438,7 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
+            // print results to the screen
             printf("%s", listing);
 
         // case: MKD
@@ -467,12 +498,16 @@ int main(int argc, char* argv[])
             }
             resp = ntohl(resp);
 
+            // case: response indicates an already existing directory
             if (resp == -2) {
                 printf("The directory already exists on the server\n");
+            // case: response indicates an error in creating directory
             } else if (resp == -1) {
                 printf("Error making directory\n");
+            // case: reponse indicates a successfully created directory
             } else if (resp == 1) {
                 printf("Directory successfully made\n");
+            // case: anything else is an error
             } else {
                 fprintf(stderr, "myftp: error in server response\n");
             }
@@ -538,9 +573,10 @@ int main(int argc, char* argv[])
             }
             resp = ntohl(resp);
 
-            // confirm delete
+            // case: directory exists on the server
             if (resp == 1) {
                 bzero(buf, sizeof(buf));
+                // get the user to confirm/reject deletion
                 while (strcmp(buf, "Yes") != 0 && strcmp(buf, "No") != 0) {
                     printf("are you sure you want to delete %s? Please answer Yes or No: ", dir);
                     if(fgets(buf,sizeof(buf),stdin)<0)
@@ -559,7 +595,9 @@ int main(int argc, char* argv[])
                         len--;
                     }
                 }
+                // case: user confirms
                 if (strcmp(buf, "Yes") == 0) {
+                    // indicator flag set to 1 and sent to user
                     flag = 1;
                     flag = htonl(flag);
                     if(send(s, &flag ,sizeof(int),0)==-1)
@@ -568,21 +606,26 @@ int main(int argc, char* argv[])
                         close(s);
                         exit(1);
                     }
+
                     // receive server delete resp
                     if((recv(s, &return_val, sizeof(int), 0)) == -1) {
-                    fprintf(stderr,"myftp: error in recv\n");
-                    close(s);
-                    exit(1);
+                        fprintf(stderr,"myftp: error in recv\n");
+                        close(s);
+                        exit(1);
                     }
                     return_val = ntohl(return_val);
 
+                    // if the return value of the deletion is 0, success
                     if (return_val == 0) {
                         printf("Directory deleted\n");
+                    // else, there was something wrong
                     } else {
                         printf("Failed to delete directory\n");
                     }
+                // case: user abandons deletion
                 } else if (strcmp(buf, "No") == 0) {
                     printf("Delete abandoned by the user!\n");
+                    // send flag of -1 to the server
                     flag = -1;
                     flag = htonl(flag);
                     if(send(s, &flag ,sizeof(int),0)==-1)
@@ -592,8 +635,10 @@ int main(int argc, char* argv[])
                         exit(1);
                     }
                 }
+            // case: directory does not exists
             } else if (resp == -1) {
                 printf("The directory does not exist on server\n");
+            // case: invalid response
             } else {
                 fprintf(stderr, "myftp: invalid response from server: %d\n", resp);
             }
@@ -658,12 +703,18 @@ int main(int argc, char* argv[])
                 exit(1);
             }
             resp = ntohl(resp);
+            // case: successful change
             if(resp == 1){
                 printf("Changed current directory\n");
+            // case: uncessful change 
             } else if(resp == -1){
                 printf("Error in changing directory\n");
+            // case: file doesn't exist
             } else if(resp == -2){
                 printf("The directory does not exist on the server\n");
+            // case: the file entered was not a directory
+            } else if(resp == -3){
+                printf("%s is not a directory\n",dir);
             }
  
         // case: DEL
@@ -726,6 +777,7 @@ int main(int argc, char* argv[])
             // confirm delete
             if (resp == 1) {
                 bzero(buf, sizeof(buf));
+                // keep prompting user for the confirmation of delte
                 while (strcmp(buf, "Yes") != 0 && strcmp(buf, "No") != 0) {
                     printf("are you sure you want to delete %s? Please answer Yes or No: ", file);
                     if(fgets(buf,sizeof(buf),stdin)<0)
@@ -744,9 +796,11 @@ int main(int argc, char* argv[])
                         len--;
                     }
                 }
+                // if the confirm the delete:
                 if (strcmp(buf, "Yes") == 0) {
                     flag = 1;
                     flag = htonl(flag);
+                    // send confirm flag to the server
                     if(send(s, &flag ,sizeof(int),0)==-1)
                     {
                         fprintf(stderr,"myftp: error in send\n");
@@ -755,19 +809,23 @@ int main(int argc, char* argv[])
                     }
                     // receive server delete resp
                     if((recv(s, &return_val, sizeof(int), 0)) == -1) {
-                    fprintf(stderr,"myftp: error in recv\n");
-                    close(s);
-                    exit(1);
-                }
-                return_val = ntohl(return_val);
+                        fprintf(stderr,"myftp: error in recv\n");
+                        close(s);
+                        exit(1);
+                    }
+                    return_val = ntohl(return_val);
 
-                if (return_val == 0) {
-                    printf("Deletion successful\n");
-                } else {
-                    printf("Deletion unsuccessful\n");
-                }
+                    // case: deletion was successful
+                    if (return_val == 0) {
+                        printf("Deletion successful\n");
+                    // case: deletion was not successful
+                    } else {
+                        printf("Deletion unsuccessful\n");
+                    }
+                // case: user abandons the deletion
                 } else if (strcmp(buf, "No") == 0) {
                     printf("Delete abandoned by the user!\n");
+                    // send abandonment flag to client
                     flag = -1;
                     flag = htonl(flag);
                     if(send(s, &flag ,sizeof(int),0)==-1)
@@ -777,8 +835,10 @@ int main(int argc, char* argv[])
                         exit(1);
                     }
                 }
+            // if the file doesn't exist
             } else if (resp == -1) {
                 printf("myftp: file does not exist on server\n");
+            // if any other code is received
             } else {
                 fprintf(stderr, "myftp: invalid response from server: %d\n", resp);
             }

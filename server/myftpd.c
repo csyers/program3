@@ -116,6 +116,7 @@ int main(int argc, char* argv[])
                     exit(1);
                 }
 
+                // decode len_filename
                 len_filename = ntohs(len_filename);
         
                 // receive file name
@@ -127,14 +128,22 @@ int main(int argc, char* argv[])
                     close(s);
                     exit(1);
                 }
+
+                // null terminate the buffer
                 buf[len] = '\0';
 
-                // print name of file
+                // make sure the file is readable
                 if (access(buf, R_OK) != -1) {
-                    //return size of file
+                    // case: file is readable
+                    
+                    // get the number of bytes in the file with stat
                     stat(buf, &st);
                     filesize = st.st_size;
+
                     if(!S_ISREG(st.st_mode)){
+                        // case: file is not a regular file
+                        
+                        // send the error code -3 to the client
                         int temp = -3;
                         temp = htonl(temp);
                         if(send(new_s, &temp, sizeof(int), 0)==-1) 
@@ -145,7 +154,10 @@ int main(int argc, char* argv[])
                             exit(1);
                         }
                     } else {
+                        // case: file is a regular file
                         filesize = htonl(filesize);
+
+                        // send the size of the file to the client
                         if(send(new_s, &filesize, sizeof(int), 0)==-1) 
                         {
                             fprintf(stderr, "myftpd: server send error\n");
@@ -154,7 +166,7 @@ int main(int argc, char* argv[])
                             exit(1);
                         }
 
-                        // send the file
+                        // get a file pointer to read the file
                         if (!(fp = fopen(buf, "r"))) {
                             fprintf(stderr,"myftpd: file is unreadable\n");
                             close(new_s);
@@ -162,7 +174,7 @@ int main(int argc, char* argv[])
                             exit(1);
                         }
 
-                        // send MD5 Hash
+                        // computer the MD5 hash
                         td = mhash_init(MHASH_MD5);
                         if (td == MHASH_FAILED) {
                             fprintf(stderr, "myftpd: md5 hash failed\n");
@@ -179,10 +191,12 @@ int main(int argc, char* argv[])
                             bytes=fread(buf,1,MAX_LINE,fp);
                         }
             
+                        // reset the file poniter
                         rewind(fp);
 
                         mhash_deinit(td, hash);
-                        if(send(new_s, &hash, sizeof(hash), 0)==-1) // NULL terminator?
+                        // send the MD5 hash
+                        if(send(new_s, &hash, sizeof(hash), 0)==-1)
                         {
                             fprintf(stderr, "myftpd: server send error\n");
                             close(new_s);
@@ -190,12 +204,15 @@ int main(int argc, char* argv[])
                             exit(1);
                         }
 
+                        // send the file
                         while(1) {
                             bzero((char *)buf, sizeof(buf));
+                            // read some bytes from the file
                             int nred = fread(buf, 1, MAX_LINE, fp);
 
+                            // if some bytes were read, send them to the client
                             if (nred > 0) {
-                                if(send(new_s, &buf, nred, 0)==-1) // NULL terminator?
+                                if(send(new_s, &buf, nred, 0)==-1)
                                 {
                                     fprintf(stderr, "myftpd: server send error\n");
                                     close(new_s);
@@ -204,18 +221,23 @@ int main(int argc, char* argv[])
                                 }
                             }
 
+                            // if fewer than MAX_LINE bytes were read, there could be an error
                             if (nred < MAX_LINE) {
+                                // if there was an error, exit
                                 if(ferror(fp)) {
                                     fprintf(stderr, "myftpd: server file read error\n");
                                     close(new_s);
                                     close(s);
                                     exit(1);
                                 }
+                                // else break out of the while look
                                 break;
                             }
                         }
                     }
+                // case: the file is not readable
                 } else if(access(buf, F_OK) != -1) {
+                    // send an indicator code of -2 to the client
                     int temp = -2;
                     temp = htonl(temp);
                     if(send(new_s, &temp, sizeof(int), 0)==-1) 
@@ -225,7 +247,9 @@ int main(int argc, char* argv[])
                         close(s);
                         exit(1);
                     }
+                // case: the file does not exist
                 } else {
+                    // send an indicator code of -1 to the client
                     int temp = -1;
                     temp = htonl(temp);
                     if(send(new_s, &temp, sizeof(int), 0)==-1) 
@@ -303,7 +327,9 @@ int main(int argc, char* argv[])
                     exit(1);
                 }
 
+                // start timer
                 gettimeofday(&tv_start,0);
+
                 // receive file
                 int remaining_filesize = filesize;
                 while (remaining_filesize > 0) {
@@ -323,6 +349,7 @@ int main(int argc, char* argv[])
                     }
                 }
 
+                // end timer
                 gettimeofday(&tv_end,0);
 
                 // receive MD5 hash
@@ -332,6 +359,8 @@ int main(int argc, char* argv[])
                     close(s);
                     exit(1);
                 }
+
+                // reset filepointer and calculate MD5 hash
                 rewind(fp);
                 td = mhash_init(MHASH_MD5);
                 if (td == MHASH_FAILED) {
@@ -350,6 +379,7 @@ int main(int argc, char* argv[])
                 mhash_deinit(td,hash);
                 fclose(fp);
 
+                // if the hashes are the same, calculate and send the time difference in the timer
                 if(strncmp(hash,client_hash,16) == 0){
                     // same
                     int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
@@ -362,6 +392,7 @@ int main(int argc, char* argv[])
                         close(s);
                         exit(1);
                     }
+                // if the hashes are different, send an error code to the client
                 } else {
                     int flag = -1;
                     flag = htonl(flag);
@@ -382,15 +413,21 @@ int main(int argc, char* argv[])
                 DIR *d;
                 struct dirent *dir;
 
+                // clear contents of listing
                 bzero(listing, sizeof(listing));
+
+                // open the current directory
                 d = opendir(".");
+                // if the open was successful
                 if (d) {
+                    // continuously read in directory listings and concatenate them onto listing
                     while((dir = readdir(d)) != NULL) {
                         strcat(listing, dir->d_name);
                         strcat(listing, "\n");
                     }
                     strcat(listing, "\0");
                     closedir(d);
+                // if there was an error opening the directory, print and quit
                 } else {
                     fprintf(stderr, "myftpd: directory listing could not be obtained\n");
                     close(new_s);
@@ -447,19 +484,25 @@ int main(int argc, char* argv[])
                     exit(1);
                 }
 
+                // attempt to make the directory with the filename
                 int return_val = mkdir(file, S_IRWXU | S_IRWXG);
                 int flag;
 
+                // if the creation was successful, set flag to 1
                 if (return_val == 0) {
                     flag = 1;
+                // if the creation was unsuccessful:
                 } else {
                     if (errno == EEXIST) {
+                        // case: directory already exists
                         flag = -2;
                     } else {
+                        // case: error in making it
                         flag = -1;
                     }
                 }
 
+                // send the flag to the client
                 flag = htonl(flag);
                 if(send(new_s, &flag, sizeof(int), 0)==-1) 
                 {
@@ -503,11 +546,15 @@ int main(int argc, char* argv[])
 
                 // check if dir exists
                 int flag;
+                // case: it exists
                 if (d) {
                     flag = 1;
+                // case: it doesn't exist
                 } else {
                     flag = -1;
                 }
+
+                // send flag to client
                 flag = htonl(flag);
                 if(send(new_s, &flag, sizeof(int), 0)==-1) 
                 {
@@ -527,20 +574,24 @@ int main(int argc, char* argv[])
                         close(s);
                         exit(1);
                     }
-                    flag = ntohl(flag);
 
+                    flag = ntohl(flag);
+                    // case: user confirms delete
                     if (flag == 1) {
-                        flag = remove(dir);
-                        flag = htonl(flag);
-                        if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                        // set flag to
+                        int ret_val = remove(dir);
+                        ret_val = htonl(ret_val);
+                        if(send(new_s, &ret_val, sizeof(int), 0)==-1) 
                         {
                             fprintf(stderr, "myftpd: server send error\n");
                             close(new_s);
                             close(s);
                             exit(1);
                         }
+                    // case: user abandons delete
                     } else if (flag == -1) {
                         // do nothing 
+                    // case: bad response
                     } else {
                         fprintf(stderr, "myftpd: invalid response from client\n");
                         close(new_s);
@@ -580,17 +631,30 @@ int main(int argc, char* argv[])
 
                 // check if dir exists
                 int flag;
+                struct stat statbuf;
+                stat(dir,&statbuf);
                 if (access(dir, F_OK) != -1) {
-                    // set the flag
+                    // change to that directory and get the return value
                     ret_val = chdir(dir);
+                    // if it is successful, send success code
                     if (ret_val == 0){
                         flag = 1;
+                    // if it was unsuccesfuly, find out why
                     } else {
-                        flag = -1;
+                        // case: it failed to change to the directory
+                        if(S_ISDIR(statbuf.st_mode)){
+                            flag = -1;
+                        // case: it wasn't a directory (only a regular file)
+                        } else {
+                            flag = -3;
+                        }
                     }
+                // case: the file doesn't exist
                 } else {
                     flag = -2;
                 }
+
+                // send the flag to the client
                 flag = htonl(flag);
                 if(send(new_s, &flag, sizeof(int), 0)==-1) 
                 {
@@ -645,6 +709,7 @@ int main(int argc, char* argv[])
                 }
 
                 flag = ntohl(flag);
+                // if the file exists:
                 if (flag == 1) {
                     // receive resp from client
                     if((len=recv(new_s,&flag, sizeof(int),0))==-1)
@@ -656,16 +721,18 @@ int main(int argc, char* argv[])
                     }
                     flag = ntohl(flag);
 
+                    // if the user confirms deletion
                     if (flag == 1) {
-                        flag = remove(file);
-                        flag = htonl(flag);
-                        if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                        int ret_val = remove(file);
+                        ret_val = htonl(ret_val);
+                        if(send(new_s, &ret_val, sizeof(int), 0)==-1) 
                         {
                             fprintf(stderr, "myftpd: server send error\n");
                             close(new_s);
                             close(s);
                             exit(1);
                         }
+                    // if the user abandons the deletion
                     } else if (flag == -1) {
                         // do nothing 
                     } else {
