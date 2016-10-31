@@ -377,16 +377,222 @@ int main(int argc, char* argv[])
         }
         else if (strcmp(buf,"LIS") == 0)
         {
+            char listing[MAX_LINE];
+            int len_listing;
+
+            // send LIS to server, print error and exit on failure
+            if(send(s,buf,len+1,0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // receive listing size
+            if((recv(s, &len_listing, sizeof(int), 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+            }
+            len_listing = ntohl(len_listing);
+
+            // receive listing
+            bzero(listing, sizeof(listing));
+            if((recv(s, listing, len_listing, 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+            }
+
+            printf("%s", listing);
 
         // case: MKD
         }
         else if (strcmp(buf,"MKD") == 0)
         {
+            int resp;
+
+            // send MKD to server, print error and exit on failure
+            if(send(s,buf,len+1,0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // prompt user for filename
+            printf("Enter directory to create: ");
+            if(fgets(file,sizeof(file),stdin)<0)
+            {
+                fprintf(stderr,"myftp: error in fgets\n");
+                close(s);
+                exit(1);
+            }
+            file[MAX_LINE-1] = '\0';
+            len_filename = strlen(file);
+
+            // strip the newline character from the buffer
+            if((len_filename-1 > 0) && (file[len_filename-1] == '\n'))
+            {
+                file[len_filename-1] = '\0';
+                len_filename--;
+            }
+
+            // send size
+            len_filename = htons(len_filename);
+            if(send(s, &len_filename,sizeof(len_filename),0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+        
+            // send filename
+            if(send(s, &file,strlen(file),0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // receive resp
+            if((recv(s, &resp, sizeof(int), 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+            }
+            resp = ntohl(resp);
+
+            if (resp == -2) {
+                printf("The directory already exists on the server\n");
+            } else if (resp == -1) {
+                printf("Error making directory\n");
+            } else if (resp == 1) {
+                printf("Directory successfully made\n");
+            } else {
+                fprintf(stderr, "myftp: error in server response\n");
+            }
 
         // case: RMD
         }
         else if (strcmp(buf,"RMD") == 0)
         {
+            int resp, flag, return_val;
+            short int len_dirname;
+            int bytesSent;
+            int bytesReceived;
+            char dir[MAX_LINE];
+
+            // send RMD to server, print error and exit on failure
+            if(send(s,buf,len+1,0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // prompt user for dirname
+            printf("Enter directory to delete: ");
+            if(fgets(dir,sizeof(dir),stdin)<0)
+            {
+                fprintf(stderr,"myftp: error in fgets\n");
+                close(s);
+                exit(1);
+            }
+            dir[MAX_LINE-1] = '\0';
+            len_dirname = strlen(dir);
+
+            // strip the newline character from the buffer
+            if((len_dirname-1 > 0) && (dir[len_dirname-1] == '\n'))
+            {
+                dir[len_dirname-1] = '\0';
+                len_dirname--;
+            }
+
+            // send size
+            len_dirname = htons(len_dirname);
+            if((bytesSent=send(s, &len_dirname,sizeof(len_dirname),0))==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+        
+            // send dirname
+            if((bytesSent=send(s, &dir,strlen(dir),0))==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // receive resp from server
+            if((bytesReceived=recv(s, &resp, sizeof(int), 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+            }
+            resp = ntohl(resp  );
+
+            // confirm delete
+            if (resp == 1) {
+                bzero(buf, sizeof(buf));
+                while (strcmp(buf, "Yes") != 0 && strcmp(buf, "No") != 0) {
+                    printf("are you sure you want to delete %s? Please answer Yes or No: ", dir);
+                    if(fgets(buf,sizeof(buf),stdin)<0)
+                    {
+                        fprintf(stderr,"myftp: error in fgets\n");
+                        close(s);
+                        exit(1);
+                    }
+                    buf[MAX_LINE-1] = '\0';
+                    len = strlen(buf);
+
+                    // strip the newline character from the buffer
+                    if((len-1 > 0) && (buf[len-1] == '\n'))
+                    {
+                        buf[len-1] = '\0';
+                        len--;
+                    }
+                }
+                if (strcmp(buf, "Yes") == 0) {
+                    flag = 1;
+                    flag = htonl(flag);
+                    if(send(s, &flag ,sizeof(int),0)==-1)
+                    {
+                        fprintf(stderr,"myftp: error in send\n");
+                        close(s);
+                        exit(1);
+                    }
+                    // receive server delete resp
+                    if((recv(s, &return_val, sizeof(int), 0)) == -1) {
+                    fprintf(stderr,"myftp: error in recv\n");
+                    close(s);
+                    exit(1);
+                    }
+                    return_val = ntohl(return_val);
+
+                    if (return_val == 0) {
+                        printf("Directory deleted\n");
+                    } else {
+                        printf("Failed to delete directory\n");
+                    }
+                } else if (strcmp(buf, "No") == 0) {
+                    printf("Delete abandoned by the user!\n");
+                    flag = -1;
+                    flag = htonl(flag);
+                    if(send(s, &flag ,sizeof(int),0)==-1)
+                    {
+                        fprintf(stderr,"myftp: error in send\n");
+                        close(s);
+                        exit(1);
+                    }
+                }
+            } else if (resp == -1) {
+                printf("The directory does not exist on server\n");
+            } else {
+                fprintf(stderr, "myftp: invalid response from server: %d\n", resp);
+            }
 
         // case: CHD
         }
@@ -399,7 +605,7 @@ int main(int argc, char* argv[])
         {
             int resp, flag, return_val;
 
-            // send REQ to server, print error and exit on failure
+            // send DEL to server, print error and exit on failure
             if(send(s,buf,len+1,0)==-1)
             {
                 fprintf(stderr,"myftp: error in send\n");
@@ -435,7 +641,7 @@ int main(int argc, char* argv[])
             }
         
             // send filename
-            if(send(s, &file,strlen(file),0)==-1)
+            if(send(s, &file, strlen(file),0)==-1)
             {
                 fprintf(stderr,"myftp: error in send\n");
                 close(s);
@@ -504,8 +710,6 @@ int main(int argc, char* argv[])
                         exit(1);
                     }
                 }
-
-
             } else if (resp == -1) {
                 printf("myftp: file does not exist on server\n");
             } else {

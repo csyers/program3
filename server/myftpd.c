@@ -17,6 +17,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <mhash.h>
+#include <dirent.h>
+#include <errno.h>
 
 #define MAX_PENDING 5
 #define MAX_LINE 4096
@@ -86,7 +88,6 @@ int main(int argc, char* argv[])
         // infinte loop while in connection with client
         while(1)
         {
-            //printf("Waiting for user command\n");
             // receive the command from the client, exit on error
             if((len=recv(new_s,buf,sizeof(buf),0))==-1)
             {
@@ -106,7 +107,6 @@ int main(int argc, char* argv[])
                 MHASH td;
                 char hash[16];
 
-                //printf("REQ received\n");
                 // receive len of filename
                 if((len=recv(new_s, &len_filename, sizeof(short int),0))==-1)
                 {
@@ -130,9 +130,7 @@ int main(int argc, char* argv[])
                 buf[len] = '\0';
 
                 // print name of file
-                /*printf("%s\n", buf);*/
                 if (access(buf, R_OK) != -1) {
-                    //printf("file exist\n");
                     //return size of file
                     stat(buf, &st);
                     filesize = st.st_size;
@@ -165,7 +163,6 @@ int main(int argc, char* argv[])
                     bytes=fread(buf,1,MAX_LINE,fp);
                     while(bytes>0)
                     {
-                       // printf("%s",buf);
                         mhash(td,&buf,sizeof(buf));
 		                bzero(buf, sizeof(buf));
                         bytes=fread(buf,1,MAX_LINE,fp);
@@ -182,7 +179,6 @@ int main(int argc, char* argv[])
                         exit(1);
                     }
 
-                    //printf("sending the file\n");
                     while(1) {
                         bzero((char *)buf, sizeof(buf));
                         int nred = fread(buf, 1, MAX_LINE, fp);
@@ -306,7 +302,6 @@ int main(int argc, char* argv[])
                 }
 
                 gettimeofday(&tv_end,0);
-                //fclose(fp);
 
                 // receive MD5 hash
                 if (recv(new_s, client_hash, sizeof(hash), 0) == -1) {
@@ -356,19 +351,181 @@ int main(int argc, char* argv[])
                         exit(1);
                     }
                 }
-
             }
             // case: LIS
             else if(strcmp(buf,"LIS") == 0)
             {
+                char listing[MAX_LINE];
+                int len_listing;
+                DIR *d;
+                struct dirent *dir;
+
+                bzero(listing, sizeof(listing));
+                d = opendir(".");
+                if (d) {
+                    while((dir = readdir(d)) != NULL) {
+                        strcat(listing, dir->d_name);
+                        strcat(listing, "\n");
+                    }
+                    strcat(listing, "\0");
+                    closedir(d);
+                } else {
+                    fprintf(stderr, "myftpd: directory listing could not be obtained\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                // send len_listing
+                len_listing = strlen(listing);
+                len_listing = htonl(len_listing);
+                if(send(new_s, &len_listing, sizeof(int), 0)==-1) 
+                {
+                    fprintf(stderr, "myftpd: server send error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                // send listing
+                if(send(new_s, &listing, strlen(listing), 0)==-1) 
+                {
+                    fprintf(stderr, "myftpd: server send error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+
             }
             // case: MKD
             else if(strcmp(buf,"MKD") == 0)
             {
+                char file[MAX_LINE];
+                short int len_filename;
+
+                // receive len of directory
+                if((len=recv(new_s, &len_filename, sizeof(short int),0))==-1)
+                {
+                    fprintf(stderr,"myftpd: server received error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                len_filename = ntohs(len_filename);
+        
+                // receive file name
+                bzero(file, sizeof(file));
+                if((len=recv(new_s,file,len_filename,0))==-1)
+                {
+                    fprintf(stderr,"myftpd: server received error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                int return_val = mkdir(file, S_IRWXU | S_IRWXG);
+                int flag;
+
+                if (return_val == 0) {
+                    flag = 1;
+                } else {
+                    if (errno == EEXIST) {
+                        flag = -2;
+                    } else {
+                        flag = -1;
+                    }
+                }
+
+                flag = htonl(flag);
+                if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                {
+                    fprintf(stderr, "myftpd: server send error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+                
             }
             // case: RMD
             else if(strcmp(buf,"RMD") == 0)
             {
+                char dir[MAX_LINE];
+                DIR *d;
+                short int len_dirname;
+
+                // receive len of filename
+                if((len=recv(new_s, &len_dirname, sizeof(short int),0))==-1)
+                {
+                    fprintf(stderr,"myftpd: server received error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }  
+
+                len_dirname = ntohs(len_dirname);
+        
+                // receive dir name
+                bzero(dir, sizeof(dir));
+                if((len=recv(new_s,dir,len_dirname,0))==-1)
+                {
+                    fprintf(stderr,"myftpd: server received error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+                dir[len_dirname] = '\0';
+
+                d = opendir(dir);
+
+                // check if dir exists
+                int flag;
+                if (d) {
+                    flag = 1;
+                } else {
+                    flag = -1;
+                }
+                flag = htonl(flag);
+                if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                {
+                    fprintf(stderr, "myftpd: server send error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                flag = ntohl(flag);
+                if (flag == 1) {
+                    // receive resp from client
+                    if((len=recv(new_s,&flag, sizeof(int),0))==-1)
+                    {
+                        fprintf(stderr,"myftpd: server received error\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
+                    flag = ntohl(flag);
+
+                    if (flag == 1) {
+                        flag = remove(dir);
+                        flag = htonl(flag);
+                        if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                    } else if (flag == -1) {
+                        // do nothing 
+                    } else {
+                        fprintf(stderr, "myftpd: invalid response from client\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
+                }
             }
             // case: CHD
             else if(strcmp(buf,"CHD") == 0)
@@ -418,33 +575,36 @@ int main(int argc, char* argv[])
                     exit(1);
                 }
 
-                // receive resp from client
-                if((len=recv(new_s,&flag, sizeof(int),0))==-1)
-                {
-                    fprintf(stderr,"myftpd: server received error\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }
                 flag = ntohl(flag);
-
                 if (flag == 1) {
-                    flag = remove(file);
-                    flag = htonl(flag);
-                    if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                    // receive resp from client
+                    if((len=recv(new_s,&flag, sizeof(int),0))==-1)
                     {
-                        fprintf(stderr, "myftpd: server send error\n");
+                        fprintf(stderr,"myftpd: server received error\n");
                         close(new_s);
                         close(s);
                         exit(1);
                     }
-                } else if (flag == -1) {
-                    // do nothing 
-                } else {
-                    fprintf(stderr, "myftpd: invalid response from client\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
+                    flag = ntohl(flag);
+
+                    if (flag == 1) {
+                        flag = remove(file);
+                        flag = htonl(flag);
+                        if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                    } else if (flag == -1) {
+                        // do nothing 
+                    } else {
+                        fprintf(stderr, "myftpd: invalid response from client\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
                 }
             }
             // case: XIT or termination of client
