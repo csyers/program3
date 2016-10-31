@@ -105,7 +105,7 @@ int main(int argc, char* argv[])
                 int bytes;
                 short int len_filename;
                 MHASH td;
-                char hash[16];
+                unsigned char hash[16];
 
                 // receive len of filename
                 if((len=recv(new_s, &len_filename, sizeof(short int),0))==-1)
@@ -269,8 +269,8 @@ int main(int argc, char* argv[])
                 int filesize, bytesReceived, bytes;
                 short int len_filename = 0;
                 MHASH td;
-                char hash[16];
-                char client_hash[16];
+                unsigned char hash[16];
+                unsigned char client_hash[16];
 
                 struct timeval tv_start, tv_end;
 
@@ -319,89 +319,93 @@ int main(int argc, char* argv[])
                 }
                 filesize = ntohl(filesize);
 
-                // open file for receiving
-                if(!(fp = fopen(file, "w+"))) {
-                    fprintf(stderr, "myftp: error in opening file\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }
-
-                // start timer
-                gettimeofday(&tv_start,0);
-
-                // receive file
-                int remaining_filesize = filesize;
-                while (remaining_filesize > 0) {
-                    bytesReceived = recv(new_s, buf, MAX_LINE > remaining_filesize ? remaining_filesize: MAX_LINE, 0);
-                    if(bytesReceived < 0) {
+                if(filesize == -1){
+                    // case where UPL file is not a file - do nothing
+                } else {
+                    // open file for receiving
+                    if(!(fp = fopen(file, "w+"))) {
+                        fprintf(stderr, "myftp: error in opening file\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
+    
+                    // start timer
+                    gettimeofday(&tv_start,0);
+    
+                    // receive file
+                    int remaining_filesize = filesize;
+                    while (remaining_filesize > 0) {
+                        bytesReceived = recv(new_s, buf, MAX_LINE > remaining_filesize ? remaining_filesize: MAX_LINE, 0);
+                        if(bytesReceived < 0) {
+                            fprintf(stderr, "myftpd: error in recv\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                        remaining_filesize -= bytesReceived;
+                        if(fwrite(buf, sizeof(char), bytesReceived, fp) < bytesReceived) {
+                            fprintf(stderr, "myftpd: error in write\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                    }
+    
+                    // end timer
+                    gettimeofday(&tv_end,0);
+    
+                    // receive MD5 hash
+                    if (recv(new_s, client_hash, sizeof(hash), 0) == -1) {
                         fprintf(stderr, "myftpd: error in recv\n");
                         close(new_s);
                         close(s);
                         exit(1);
                     }
-                    remaining_filesize -= bytesReceived;
-                    if(fwrite(buf, sizeof(char), bytesReceived, fp) < bytesReceived) {
-                        fprintf(stderr, "myftpd: error in write\n");
-                        close(new_s);
+    
+                    // reset filepointer and calculate MD5 hash
+                    rewind(fp);
+                    td = mhash_init(MHASH_MD5);
+                    if (td == MHASH_FAILED) {
+                        fprintf(stderr, "myftp: hashing failed\n");
                         close(s);
                         exit(1);
                     }
-                }
-
-                // end timer
-                gettimeofday(&tv_end,0);
-
-                // receive MD5 hash
-                if (recv(new_s, client_hash, sizeof(hash), 0) == -1) {
-                    fprintf(stderr, "myftpd: error in recv\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }
-
-                // reset filepointer and calculate MD5 hash
-                rewind(fp);
-                td = mhash_init(MHASH_MD5);
-                if (td == MHASH_FAILED) {
-                    fprintf(stderr, "myftp: hashing failed\n");
-                    close(s);
-                    exit(1);
-                }
-                bzero(buf,sizeof(buf));
-                bytes = fread(buf, 1, MAX_LINE, fp);
-                while(bytes > 0 )
-                {
-                    mhash(td, &buf, sizeof(buf));
                     bzero(buf,sizeof(buf));
-                    bytes = fread(buf,1, MAX_LINE, fp);
-                }
-                mhash_deinit(td,hash);
-                fclose(fp);
-
-                // if the hashes are the same, calculate and send the time difference in the timer
-                if(strncmp(hash,client_hash,16) == 0){
-                    // same
-                    int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
-                    // send throughput
-                    time_diff = htonl(time_diff);
-                    if(send(new_s, &time_diff, sizeof(int), 0)==-1) 
+                    bytes = fread(buf, 1, MAX_LINE, fp);
+                    while(bytes > 0 )
                     {
-                        fprintf(stderr, "myftpd: server send error\n");
-                        close(new_s);
-                        close(s);
-                        exit(1);
+                        mhash(td, &buf, sizeof(buf));
+                        bzero(buf,sizeof(buf));
+                        bytes = fread(buf,1, MAX_LINE, fp);
                     }
-                // if the hashes are different, send an error code to the client
-                } else {
-                    int flag = -1;
-                    flag = htonl(flag);
-                    if(send(new_s, &flag, sizeof(int), 0)==-1) 
-                    {
-                        fprintf(stderr, "myftpd: server send error\n");
-                        close(new_s);
-                        close(s);
-                        exit(1);
+                    mhash_deinit(td,hash);
+                    fclose(fp);
+    
+                    // if the hashes are the same, calculate and send the time difference in the timer
+                    if(strncmp((char *)hash,(char *)client_hash,16) == 0){
+                        // same
+                        int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
+                        // send throughput
+                        time_diff = htonl(time_diff);
+                        if(send(new_s, &time_diff, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                    // if the hashes are different, send an error code to the client
+                    } else {
+                        int flag = -1;
+                        flag = htonl(flag);
+                        if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
                     }
                 }
             }

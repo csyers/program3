@@ -95,8 +95,8 @@ int main(int argc, char* argv[])
             FILE *fp;
             int bytesReceived;
             int bytes;
-            char server_hash[16];
-            char client_hash[16];
+            unsigned char server_hash[16];
+            unsigned char client_hash[16];
             MHASH td;
 
             // send REQ to server, print error and exit on failure
@@ -233,13 +233,24 @@ int main(int argc, char* argv[])
                 fclose(fp);
 
                 // if the client and server hashes match:
-                if(strncmp(client_hash,server_hash, 16) == 0)
+                if(strncmp((char *)client_hash,(char *)server_hash, 16) == 0)
                 {
                     // calculate time of file transfer
                     long int time_diff = (tv_end.tv_sec - tv_start.tv_sec)*1000000L +tv_end.tv_usec - tv_start.tv_usec;
-                    double throughput = filesize/(double)time_diff;
+                    double throughput;
+                    if(filesize == 0){
+                        throughput = 0;
+                    } else {
+                        throughput = filesize/(double)time_diff;
+                    }
                     printf("Transfer was successful\n");
-                    printf("Throughput: %lf MBps\n",throughput);
+                    printf("%d bytes transferred in %lf seconds: %lf Megabytes/sec\n",filesize,(double)time_diff/1000000,throughput);
+                    printf("File MD5sum: ");
+                    int i = 0;
+                    for (i = 0; i < 16; i++) {
+                        printf("%02x", client_hash[i]);
+                    }
+                    printf("\n");
                 // else the hashes didn't match
                 } else
                 {
@@ -256,7 +267,7 @@ int main(int argc, char* argv[])
             double throughput;
             FILE *fp;
             struct stat st;
-            char client_hash[16];
+            unsigned char client_hash[16];
             MHASH td;
 
             // send UPL to server, print error and exit on failure
@@ -323,6 +334,10 @@ int main(int argc, char* argv[])
             // get number of bytes in the file
             stat(file, &st);
             filesize = st.st_size;
+            if(!S_ISREG(st.st_mode)){
+                printf("file %s doesn't exist\n",file);
+                filesize = -1;
+            }
             filesize = htonl(filesize);
 
             // send the filesize to the server
@@ -332,81 +347,91 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
-            // open a read file pointer to the file to send
-            if (!(fp = fopen(file, "r"))) {
-                fprintf(stderr, "myftpd: file doesn't exist\n");
-                close(s);
-                exit(1);
-            }
-
-            // send the file
-            while(1) {
-                bzero((char *)buf, sizeof(buf));
-                int nred = fread(buf, sizeof(char), MAX_LINE, fp);
-                if (nred > 0) {
-                    if (send(s, &buf, nred, 0)==-1) {
-                        fprintf(stderr, "myftpd: error reading file\n");
-                        close(s);
-                        exit(1);
+            if(ntohl(filesize) != -1){
+                // open a read file pointer to the file to send
+                if (!(fp = fopen(file, "r"))) {
+                    fprintf(stderr, "myftpd: file doesn't exist\n");
+                    close(s);
+                    exit(1);
+                }
+    
+                // send the file
+                while(1) {
+                    bzero((char *)buf, sizeof(buf));
+                    int nred = fread(buf, sizeof(char), MAX_LINE, fp);
+                    if (nred > 0) {
+                        if (send(s, &buf, nred, 0)==-1) {
+                            fprintf(stderr, "myftpd: error reading file\n");
+                            close(s);
+                            exit(1);
+                        }
+                    }
+    
+                    if (nred < MAX_LINE) {
+                        if(ferror(fp)) {
+                            fprintf(stderr, "myftpd: error reading file\n");
+                            close(s);
+                            exit(1);
+                        }
+                        break;
                     }
                 }
-
-                if (nred < MAX_LINE) {
-                    if(ferror(fp)) {
-                        fprintf(stderr, "myftpd: error reading file\n");
-                        close(s);
-                        exit(1);
-                    }
-                    break;
+    
+                // calculate MD5 hash
+                fseek(fp, 0, SEEK_SET);
+                td = mhash_init(MHASH_MD5);
+                if (td == MHASH_FAILED) {
+                    fprintf(stderr, "myftp: hashing failed\n");
+                    close(s);
+                    exit(1);
                 }
-            }
-
-            // calculate MD5 hash
-            fseek(fp, 0, SEEK_SET);
-            td = mhash_init(MHASH_MD5);
-            if (td == MHASH_FAILED) {
-                fprintf(stderr, "myftp: hashing failed\n");
-                close(s);
-                exit(1);
-            }
-            bzero(buf,sizeof(buf));
-            bytes = fread(buf, 1, MAX_LINE, fp);
-            while(bytes > 0 )
-            {
-                mhash(td, &buf, sizeof(buf));
                 bzero(buf,sizeof(buf));
-                bytes = fread(buf,1, MAX_LINE, fp);
+                bytes = fread(buf, 1, MAX_LINE, fp);
+                while(bytes > 0 )
+                {
+                    mhash(td, &buf, sizeof(buf));
+                    bzero(buf,sizeof(buf));
+                    bytes = fread(buf,1, MAX_LINE, fp);
+                }
+                mhash_deinit(td,client_hash);
+    
+                // send MD5 hash
+                if(send(s, &client_hash, sizeof(client_hash), 0) == -1)
+                {
+                    fprintf(stderr, "myftp: hashing failed\n");
+                    close(s);
+                    exit(1);
+                }
+    
+                // receive the amount of time it took to receive the file 
+                if((recv(s, &time_diff, sizeof(int), 0)) == -1) {
+                    fprintf(stderr,"myftp: error in recv\n");
+                    close(s);
+                    exit(1);
+                }
+                time_diff = ntohl(time_diff);
+    
+                // if the client receives an error code for the time different
+                if (time_diff == -1) {
+                    printf("upload unsuccessful\n");
+                // else calculate the throughput and print it
+                } else {
+                    filesize = ntohl(filesize);
+                    if(filesize == 0){
+                        throughput = 0;
+                    } else {
+                        throughput = filesize/(double)time_diff;
+                    }
+                    printf("Transfer was successful\n");
+                    printf("%d bytes transferred in %lf seconds: %lf Megabytes/sec\n",filesize,(double)time_diff/1000000,throughput);
+                    printf("File MD5sum: ");
+                    int i = 0;
+                    for (i = 0; i < 16; i++) {
+                        printf("%02x", client_hash[i]);
+                    }
+                    printf("\n");
+                }
             }
-            mhash_deinit(td,client_hash);
-
-            // send MD5 hash
-            if(send(s, &client_hash, sizeof(client_hash), 0) == -1)
-            {
-                fprintf(stderr, "myftp: hashing failed\n");
-                close(s);
-                exit(1);
-            }
-
-            // receive the amount of time it took to receive the file 
-            if((recv(s, &time_diff, sizeof(int), 0)) == -1) {
-                fprintf(stderr,"myftp: error in recv\n");
-                close(s);
-                exit(1);
-            }
-            time_diff = ntohl(time_diff);
-
-            // if the client receives an error code for the time different
-            if (time_diff == -1) {
-                printf("upload unsuccessful\n");
-            // else calculate the throughput and print it
-            } else {
-                filesize = ntohl(filesize);
-                throughput = filesize/(double)time_diff;
-                printf("Transfer was successful\n");
-                printf("Throughput: %lf MBps\n",throughput);
-            }
-
-
         // case: LIS
         }
         else if (strcmp(buf,"LIS") == 0)
