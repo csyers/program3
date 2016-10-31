@@ -153,6 +153,10 @@ int main(int argc, char* argv[])
         
             if(filesize == -1) {
                 printf("file: %s does not exist on the server\n", file);
+            } else if (filesize == -2){
+                printf("Server does not have read permission on file %s\n",file);
+            } else if (filesize == -3){
+                printf("file: %s is a directory\n",file);
             } else {
                     // receive server_hash
                         if((recv(s, server_hash, sizeof(server_hash), 0)) == -1) {
@@ -224,13 +228,13 @@ int main(int argc, char* argv[])
         // case: UPL
         else if (strcmp(buf,"UPL") == 0)
         {
-        int ack, bytes, filesize;
-        int time_diff;
-        double throughput;
-        FILE *fp;
-        struct stat st;
-        char client_hash[16];
-        MHASH td;
+            int ack, bytes, filesize;
+            int time_diff;
+            double throughput;
+            FILE *fp;
+            struct stat st;
+            char client_hash[16];
+            MHASH td;
 
             // send UPL to server, print error and exit on failure
             if(send(s,buf,len+1,0)==-1)
@@ -278,7 +282,7 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
-        // receive ack
+            // receive ack
             if((recv(s, &ack, sizeof(int), 0)) == -1) {
                 fprintf(stderr,"myftp: error in recv\n");
                 close(s);
@@ -292,7 +296,7 @@ int main(int argc, char* argv[])
                 exit(1);
             }
 
-        // send filesize
+            // send filesize
             stat(file, &st);
             filesize = st.st_size;
             filesize = htonl(filesize);
@@ -301,7 +305,7 @@ int main(int argc, char* argv[])
                 close(s);
                 exit(1);
             }
-        // send file
+            // send file
             if (!(fp = fopen(file, "r"))) {
                 fprintf(stderr, "myftpd: file doesn't exist\n");
                 close(s);

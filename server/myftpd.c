@@ -134,74 +134,96 @@ int main(int argc, char* argv[])
                     //return size of file
                     stat(buf, &st);
                     filesize = st.st_size;
-                    filesize = htonl(filesize);
-                    if(send(new_s, &filesize, sizeof(int), 0)==-1) 
-                    {
-                        fprintf(stderr, "myftpd: server send error\n");
-                        close(new_s);
-                        close(s);
-                        exit(1);
-                    }
+                    if(!S_ISREG(st.st_mode)){
+                        int temp = -3;
+                        temp = htonl(temp);
+                        if(send(new_s, &temp, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                    } else {
+                        filesize = htonl(filesize);
+                        if(send(new_s, &filesize, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
 
-                    // send the file
-                    if (!(fp = fopen(buf, "r"))) {
-                        fprintf(stderr,"myftpd: file is unreadable\n");
-                        close(new_s);
-                        close(s);
-                        exit(1);
-                    }
+                        // send the file
+                        if (!(fp = fopen(buf, "r"))) {
+                            fprintf(stderr,"myftpd: file is unreadable\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
 
-                    // send MD5 Hash
-                    td = mhash_init(MHASH_MD5);
-                    if (td == MHASH_FAILED) {
-                        fprintf(stderr, "myftpd: md5 hash failed\n");
-                        close(new_s);
-                        close(s);
-                        exit(1);
-                    }
-		            bzero(buf, sizeof(buf));
-                    bytes=fread(buf,1,MAX_LINE,fp);
-                    while(bytes>0)
-                    {
-                        mhash(td,&buf,sizeof(buf));
+                        // send MD5 Hash
+                        td = mhash_init(MHASH_MD5);
+                        if (td == MHASH_FAILED) {
+                            fprintf(stderr, "myftpd: md5 hash failed\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
 		                bzero(buf, sizeof(buf));
                         bytes=fread(buf,1,MAX_LINE,fp);
-                    }
+                        while(bytes>0)
+                        {
+                            mhash(td,&buf,sizeof(buf));
+		                    bzero(buf, sizeof(buf));
+                            bytes=fread(buf,1,MAX_LINE,fp);
+                        }
             
-                    rewind(fp);
+                        rewind(fp);
 
-                    mhash_deinit(td, hash);
-                    if(send(new_s, &hash, sizeof(hash), 0)==-1) // NULL terminator?
+                        mhash_deinit(td, hash);
+                        if(send(new_s, &hash, sizeof(hash), 0)==-1) // NULL terminator?
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+
+                        while(1) {
+                            bzero((char *)buf, sizeof(buf));
+                            int nred = fread(buf, 1, MAX_LINE, fp);
+
+                            if (nred > 0) {
+                                if(send(new_s, &buf, nred, 0)==-1) // NULL terminator?
+                                {
+                                    fprintf(stderr, "myftpd: server send error\n");
+                                    close(new_s);
+                                    close(s);
+                                    exit(1);
+                                }
+                            }
+
+                            if (nred < MAX_LINE) {
+                                if(ferror(fp)) {
+                                    fprintf(stderr, "myftpd: server file read error\n");
+                                    close(new_s);
+                                    close(s);
+                                    exit(1);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                } else if(access(buf, F_OK) != -1) {
+                    int temp = -2;
+                    temp = htonl(temp);
+                    if(send(new_s, &temp, sizeof(int), 0)==-1) 
                     {
                         fprintf(stderr, "myftpd: server send error\n");
                         close(new_s);
                         close(s);
                         exit(1);
-                    }
-
-                    while(1) {
-                        bzero((char *)buf, sizeof(buf));
-                        int nred = fread(buf, 1, MAX_LINE, fp);
-
-                        if (nred > 0) {
-                            if(send(new_s, &buf, nred, 0)==-1) // NULL terminator?
-                            {
-                                fprintf(stderr, "myftpd: server send error\n");
-                                close(new_s);
-                                close(s);
-                                exit(1);
-                            }
-                        }
-
-                        if (nred < MAX_LINE) {
-                            if(ferror(fp)) {
-                                fprintf(stderr, "myftpd: server file read error\n");
-                                close(new_s);
-                                close(s);
-                                exit(1);
-                            }
-                            break;
-                        }
                     }
                 } else {
                     int temp = -1;
@@ -531,53 +553,6 @@ int main(int argc, char* argv[])
             else if(strcmp(buf,"CHD") == 0)
             {
                 char dir[MAX_LINE];
-                DIR *d;
-                short int len_dirname;
-
-                // receive len of filename
-                if((len=recv(new_s, &len_dirname, sizeof(short int),0))==-1)
-                {
-                    fprintf(stderr,"myftpd: server received error\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }  
-
-                len_dirname = ntohs(len_dirname);
-        
-                // receive dir name
-                bzero(dir, sizeof(dir));
-                if((len=recv(new_s,dir,len_dirname,0))==-1)
-                {
-                    fprintf(stderr,"myftpd: server received error\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }
-                dir[len_dirname] = '\0';
-
-                d = opendir(dir);
-
-                // check if dir exists
-                int flag;
-                if (d) {
-                    flag = 1;
-                } else {
-                    flag = -1;
-                }
-                flag = htonl(flag);
-                if(send(new_s, &flag, sizeof(int), 0)==-1) 
-                {
-                    fprintf(stderr, "myftpd: server send error\n");
-                    close(new_s);
-                    close(s);
-                    exit(1);
-                }
-            }
-            // case: DEL
-            else if(strcmp(buf,"DEL") == 0)
-            {
-                char dir[MAX_LINE];
                 short int len_dirname;
                 int ret_val;
 
@@ -607,7 +582,6 @@ int main(int argc, char* argv[])
                 int flag;
                 if (access(dir, F_OK) != -1) {
                     // set the flag
-                    printf("dir: %s\n",dir);
                     ret_val = chdir(dir);
                     if (ret_val == 0){
                         flag = 1;
@@ -624,6 +598,82 @@ int main(int argc, char* argv[])
                     close(new_s);
                     close(s);
                     exit(1);
+                }
+            }
+            // case: DEL
+            else if(strcmp(buf,"DEL") == 0)
+            {
+                char file[MAX_LINE];
+                short int len_filename;
+
+                // receive len of filename
+                if((len=recv(new_s, &len_filename, sizeof(short int),0))==-1)
+                {
+                    fprintf(stderr,"myftpd: server received error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                len_filename = ntohs(len_filename);
+        
+                // receive file name
+                bzero(file, sizeof(file));
+                if((len=recv(new_s,file,len_filename,0))==-1)
+                {
+                    fprintf(stderr,"myftpd: server received error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+                file[len] = '\0';
+
+                // check if file exists
+                int flag;
+                if (access(file, F_OK) != -1) {
+                    flag = 1;
+                } else {
+                    flag = -1;
+                }
+                flag = htonl(flag);
+                if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                {
+                    fprintf(stderr, "myftpd: server send error\n");
+                    close(new_s);
+                    close(s);
+                    exit(1);
+                }
+
+                flag = ntohl(flag);
+                if (flag == 1) {
+                    // receive resp from client
+                    if((len=recv(new_s,&flag, sizeof(int),0))==-1)
+                    {
+                        fprintf(stderr,"myftpd: server received error\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
+                    flag = ntohl(flag);
+
+                    if (flag == 1) {
+                        flag = remove(file);
+                        flag = htonl(flag);
+                        if(send(new_s, &flag, sizeof(int), 0)==-1) 
+                        {
+                            fprintf(stderr, "myftpd: server send error\n");
+                            close(new_s);
+                            close(s);
+                            exit(1);
+                        }
+                    } else if (flag == -1) {
+                        // do nothing 
+                    } else {
+                        fprintf(stderr, "myftpd: invalid response from client\n");
+                        close(new_s);
+                        close(s);
+                        exit(1);
+                    }
                 }
             }
             // case: XIT or termination of client
