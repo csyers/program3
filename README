@@ -1,3 +1,69 @@
-Put stuff in here.
+Name: Tim Chang (tchang2), Christopher Syers (csyers)
+Date: October 3, 2016
+CSE 30264: Computer Networks
+Programming Assignment 3: Prototype FTP Connection
 
-Okay
+INCLUDED FILES:
+    README - this readme file
+    server - server subdirectory
+        myftpd.c - source code of server
+        Makefile - makefile for server
+        SmallFile.txt - link to test file 1
+        MediumFile.pdf - link to test file 2
+        LargeFile.pdf - link to test file 3
+    client - client subdirectory
+        myftp.c - source code of client
+        Makefile - makefile for client
+
+This directory contains two subdirectories - one for the client and one 
+for the server. To start the server, change into the server directory and 
+type the command:
+
+$ make
+
+This will create an executable called myftpd. To start the server, use the 
+follwing command:
+
+$ ./myftpd portno
+
+where portno is any port (41010 used for testing). On another studnet machine,
+change into the client subdirectory and type:
+
+$ make
+
+to create the client executable, called myftp. To run the client, type:
+
+$ ./myftp hostname portno
+
+where hostname is the hostname of the machine running the server, and portno
+is the port number the server was started with.
+
+From there, follow the prompt at the client to use the FTP.
+
+Examples (at server):
+
+> LIS
+(lists directory contents)
+> REQ
+---> SmallFile.txt
+(gets the SmallFile.txt)
+> MKD
+---> test
+(creates directory named test)
+> CHD
+---> test
+(moves to test directory)
+> UPL
+---> SmallFile.txt
+(puts SmallFile.txt in test directory)
+> DEL
+---> SmallFile.txt
+(removes file)
+> CHD
+---> ..
+(moves up a level)
+> RMD
+---> test
+(removes test directory)
+> XIT
+(exits program)
