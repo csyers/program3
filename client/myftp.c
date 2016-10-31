@@ -532,7 +532,7 @@ int main(int argc, char* argv[])
                 close(s);
                 exit(1);
             }
-            resp = ntohl(resp  );
+            resp = ntohl(resp);
 
             // confirm delete
             if (resp == 1) {
@@ -598,7 +598,70 @@ int main(int argc, char* argv[])
         }
         else if (strcmp(buf,"CHD") == 0)
         {
+            int resp;
+            short int len_dirname;
+            int bytesSent;
+            int bytesReceived;
+            char dir[MAX_LINE];
 
+            // send RMD to server, print error and exit on failure
+            if(send(s,buf,len+1,0)==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // prompt user for dirname
+            printf("Enter directory to change to: ");
+            if(fgets(dir,sizeof(dir),stdin)<0)
+            {
+                fprintf(stderr,"myftp: error in fgets\n");
+                close(s);
+                exit(1);
+            }
+            dir[MAX_LINE-1] = '\0';
+            len_dirname = strlen(dir);
+
+            // strip the newline character from the buffer
+            if((len_dirname-1 > 0) && (dir[len_dirname-1] == '\n'))
+            {
+                dir[len_dirname-1] = '\0';
+                len_dirname--;
+            }
+
+            // send size
+            len_dirname = htons(len_dirname);
+            if((bytesSent=send(s, &len_dirname,sizeof(len_dirname),0))==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+        
+            // send dirname
+            if((bytesSent=send(s, &dir,strlen(dir),0))==-1)
+            {
+                fprintf(stderr,"myftp: error in send\n");
+                close(s);
+                exit(1);
+            }
+
+            // receive resp from server
+            if((bytesReceived=recv(s, &resp, sizeof(int), 0)) == -1) {
+                fprintf(stderr,"myftp: error in recv\n");
+                close(s);
+                exit(1);
+            }
+            resp = ntohl(resp);
+            if(resp == 1){
+                printf("Changed current directory\n");
+            } else if(resp == -1){
+                printf("Error in changing directory\n");
+            } else if(resp == -2){
+                printf("The directory does not exist on the server\n");
+            }
+ 
         // case: DEL
         }
         else if (strcmp(buf,"DEL") == 0)
