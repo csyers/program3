@@ -247,7 +247,7 @@ int main(int argc, char* argv[])
                     printf("%d bytes transferred in %lf seconds: %lf Megabytes/sec\n",filesize,(double)time_diff/1000000,throughput);
                     printf("File MD5sum: ");
                     int i = 0;
-                    for (i = 0; i < 16; i++) {
+                    for (i = 0; i < mhash_get_block_size(MHASH_MD5); i++) {
                         printf("%02x", client_hash[i]);
                     }
                     printf("\n");
@@ -426,7 +426,7 @@ int main(int argc, char* argv[])
                     printf("%d bytes transferred in %lf seconds: %lf Megabytes/sec\n",filesize,(double)time_diff/1000000,throughput);
                     printf("File MD5sum: ");
                     int i = 0;
-                    for (i = 0; i < 16; i++) {
+                    for (i = 0; i < mhash_get_block_size(MHASH_MD5); i++) {
                         printf("%02x", client_hash[i]);
                     }
                     printf("\n");
